@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CareerModePopup } from '../components/CareerModePopup'
 import type { CareerProgress } from '../types/career'
@@ -17,6 +17,7 @@ function App() {
   const { status, address, handleConnect, isConnecting } = useStarknetConnect()
   const { initializePlayer, isLoading: initializing, canInitialize } = useInitializePlayer()
   const [isConnectedAndInitialized, setIsConnectedAndInitialized] = useState(false)
+  const [pendingCareerStart, setPendingCareerStart] = useState(false)
 
   // Format wallet address for display
   const formatAddress = (addr: string | undefined) => {
@@ -60,17 +61,9 @@ function App() {
     autoInitialize()
   }, [status, canInitialize, initializePlayer, isConnectedAndInitialized])
 
-  // Handle Career button click - connect wallet and initialize player
-  const handleCareerClick = async () => {
+  // Proceed to career mode after wallet is connected
+  const proceedToCareer = useCallback(async () => {
     try {
-      // Step 1: Connect wallet if not connected
-      if (status !== 'connected') {
-        console.log('🔌 Connecting wallet...')
-        await handleConnect()
-        await new Promise((resolve) => setTimeout(resolve, 1500))
-        console.log('✅ Wallet connected')
-      }
-
       // Step 2: Initialize player if not initialized
       if (canInitialize) {
         console.log('🎮 Initializing player...')
@@ -78,17 +71,50 @@ function App() {
         if (!result?.success) {
           console.error('❌ Player initialization failed')
           alert('Failed to initialize player. Please try again.')
+          setPendingCareerStart(false)
           return
         }
         await new Promise((resolve) => setTimeout(resolve, 2000))
         console.log('✅ Player initialized')
       }
 
+      // Only show popup after wallet is connected and player is initialized
       setIsConnectedAndInitialized(true)
       setShowCareerPopup(true)
+      setPendingCareerStart(false)
+    } catch (error) {
+      console.error('❌ Error in career initialization:', error)
+      alert(`Failed to initialize: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setPendingCareerStart(false)
+    }
+  }, [canInitialize, initializePlayer])
+
+  // Handle pending career start after wallet connects
+  useEffect(() => {
+    if (pendingCareerStart && status === 'connected') {
+      console.log('✅ Wallet connected, proceeding to career mode...')
+      proceedToCareer()
+    }
+  }, [pendingCareerStart, status, proceedToCareer])
+
+  // Handle Career button click - connect wallet first
+  const handleCareerClick = async () => {
+    try {
+      // Step 1: Connect wallet if not connected
+      if (status !== 'connected') {
+        console.log('🔌 Connecting wallet...')
+        setPendingCareerStart(true) // Mark that we're waiting to start career
+        await handleConnect()
+        // Don't show popup yet - wait for useEffect to handle after connection
+        return
+      }
+
+      // If already connected, proceed to initialization or show popup
+      await proceedToCareer()
     } catch (error) {
       console.error('❌ Error in career setup:', error)
       alert(`Failed to start career: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setPendingCareerStart(false)
     }
   }
 
