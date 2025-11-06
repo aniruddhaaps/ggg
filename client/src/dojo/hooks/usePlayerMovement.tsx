@@ -1,0 +1,220 @@
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { Vector3 } from 'three';
+import useAppStore, { GamePhase } from "../../zustand/store";
+import { useMovePlayer } from './useMovePlayer';
+
+interface UsePlayerMovementReturn {
+  showTransactionPopup: boolean;
+  transactionError: string | null;
+  isProcessingTransaction: boolean;
+  closeTransactionPopup: () => void;
+  lastTransactionHash: string | null;
+  lastBoundaryCrossing: { x: number; z: number; deltaX: number; deltaY: number } | null;
+}
+
+export const usePlayerMovement = (): UsePlayerMovementReturn => {
+  const { position, updatePosition, player, gamePhase, raceStarted } = useAppStore();
+  const { movePlayer, isLoading, error } = useMovePlayer();
+
+
+  const lastVerifiedPosition = useRef<{ x: number; z: number }>({ x: 400, z: 400 });
+  const isProcessingBoundary = useRef<boolean>(false);
+  const lastRaceState = useRef<boolean>(false);
+
+  const [showTransactionPopup, setShowTransactionPopup] = useState(false);
+  const [transactionError, setTransactionError] = useState<string | null>(null);
+  const [lastTransactionHash, setLastTransactionHash] = useState<string | null>(null);
+  const [lastBoundaryCrossing, setLastBoundaryCrossing] = useState<{ x: number; z: number; deltaX: number; deltaY: number } | null>(null);
+
+  
+  const GENESIS_X = 400;
+  const GENESIS_Z = 400;
+  const GRID_SIZE = 20;
+
+  
+  const getGridCell = useCallback((coord: number, genesis: number): number => {
+    return Math.floor((coord - genesis) / GRID_SIZE);
+  }, []);
+
+  
+  // const getGridBoundary = useCallback((gridCell: number, genesis: number): number => {
+  //   return genesis + (gridCell * GRID_SIZE);
+  // }, []);
+
+  // Convert delta to 0-2 range for contract
+  const convertDeltaToContractFormat = useCallback((delta: number): number => {
+    if (delta < 0) return 0;  // -1 becomes 0
+    if (delta > 0) return 2;  // +1 becomes 2
+    return 1;                 // 0 stays 1
+  }, []);
+
+
+  const checkBoundaryCrossing = useCallback((
+    currentPos: { x: number; z: number },
+    lastPos: { x: number; z: number }
+  ): { crossed: boolean; deltaX: number; deltaY: number; contractDeltaX: number; contractDeltaY: number } => {
+    const currentGridX = getGridCell(currentPos.x, GENESIS_X);
+    const currentGridZ = getGridCell(currentPos.z, GENESIS_Z);
+    const lastGridX = getGridCell(lastPos.x, GENESIS_X);
+    const lastGridZ = getGridCell(lastPos.z, GENESIS_Z);
+
+    const crossedX = currentGridX !== lastGridX;
+    const crossedZ = currentGridZ !== lastGridZ;
+
+    if (crossedX || crossedZ) {
+      // Calculate raw delta
+      let deltaX = currentGridX - lastGridX;
+      let deltaY = currentGridZ - lastGridZ;
+
+      // CLAMP to ±1 - only move one grid cell at a time
+      // If player jumped multiple cells, we process one cell per frame
+      if (deltaX > 1) deltaX = 1;
+      if (deltaX < -1) deltaX = -1;
+      if (deltaY > 1) deltaY = 1;
+      if (deltaY < -1) deltaY = -1;
+
+      // Convert to contract format (0-2)
+      const contractDeltaX = convertDeltaToContractFormat(deltaX);
+      const contractDeltaY = convertDeltaToContractFormat(deltaY);
+
+      return {
+        crossed: true,
+        deltaX,
+        deltaY,
+        contractDeltaX,
+        contractDeltaY
+      };
+    }
+
+    return {
+      crossed: false,
+      deltaX: 0,
+      deltaY: 0,
+      contractDeltaX: 1,
+      contractDeltaY: 1
+    };
+  }, [getGridCell, convertDeltaToContractFormat]);
+
+  
+  const handleTransactionSuccess = useCallback((newGridPos: { x: number; z: number }) => {
+    lastVerifiedPosition.current = newGridPos;
+    setShowTransactionPopup(false);
+    setTransactionError(null);
+    isProcessingBoundary.current = false;
+    console.log('✅ Boundary crossing verified onchain:', newGridPos);
+  }, []);
+
+  
+  const handleTransactionFailure = useCallback((error: string) => {
+    console.log('❌ Boundary crossing failed, reverting position');
+    
+    
+    // const revertPosition = {
+    //   x: lastVerifiedPosition.current.x,
+    //   y: 1.5, 
+    //   z: lastVerifiedPosition.current.z
+    // };
+    
+    // updatePosition(revertPosition);
+    setTransactionError(error);
+    isProcessingBoundary.current = false;
+    
+    
+    setTimeout(() => {
+      setShowTransactionPopup(false);
+      setTransactionError(null);
+    }, 300);
+  }, [updatePosition]);
+
+
+  const processBoundaryCrossing = useCallback(async (contractDeltaX: number, contractDeltaY: number, originalDeltaX: number, originalDeltaY: number, currentPos: { x: number; z: number }) => {
+    if (isProcessingBoundary.current) return;
+
+    isProcessingBoundary.current = true;
+    setShowTransactionPopup(true);
+    setTransactionError(null);
+    setLastBoundaryCrossing({
+      x: currentPos.x,
+      z: currentPos.z,
+      deltaX: originalDeltaX,
+      deltaY: originalDeltaY
+    });
+
+    try {
+      console.log(`🚶 Processing boundary crossing: original deltaX=${originalDeltaX}, deltaY=${originalDeltaY}`);
+      console.log(`📡 Sending to contract: contractDeltaX=${contractDeltaX}, contractDeltaY=${contractDeltaY}`);
+
+      const result = await movePlayer(contractDeltaX, contractDeltaY);
+
+      if (result.success) {
+        // Store transaction hash
+        if (result.transactionHash) {
+          setLastTransactionHash(result.transactionHash);
+        }
+
+        const newVerifiedPos = {
+          x: lastVerifiedPosition.current.x + (originalDeltaX * GRID_SIZE),
+          z: lastVerifiedPosition.current.z + (originalDeltaY * GRID_SIZE)
+        };
+        handleTransactionSuccess(newVerifiedPos);
+      } else {
+        handleTransactionFailure(result.error || 'Transaction failed');
+      }
+    } catch (error) {
+      handleTransactionFailure(error instanceof Error ? error.message : 'Unknown error');
+    }
+  }, [movePlayer, handleTransactionSuccess, handleTransactionFailure]);
+
+
+  // Reset lastVerifiedPosition when switching between racing and dungeon modes
+  useEffect(() => {
+    if (raceStarted !== lastRaceState.current) {
+      lastRaceState.current = raceStarted;
+
+      if (raceStarted) {
+        // Switching to racing mode - reset to racing start position
+        // Spawn is at (848.8, 415.6), calculate grid-aligned position
+        // Grid cell X = floor((848.8 - 400) / 20) = floor(22.44) = 22 -> 400 + 22*20 = 840
+        // Grid cell Z = floor((415.6 - 400) / 20) = floor(0.78) = 0 -> 400 + 0*20 = 400
+        lastVerifiedPosition.current = { x: 840, z: 400 };
+        console.log('🏎️ Racing mode: Reset verified position to racing start:', lastVerifiedPosition.current);
+      } else {
+        // Switching to dungeon mode - reset to dungeon start position
+        lastVerifiedPosition.current = { x: 400, z: 400 };
+        console.log('🏰 Dungeon mode: Reset verified position to dungeon start:', lastVerifiedPosition.current);
+      }
+    }
+  }, [raceStarted]);
+
+  useEffect(() => {
+    if (isProcessingBoundary.current) return;
+
+    const currentPos = { x: position.x, z: position.z };
+    const { crossed, deltaX, deltaY, contractDeltaX, contractDeltaY } = checkBoundaryCrossing(currentPos, lastVerifiedPosition.current);
+
+    if (crossed) {
+      console.log('🎯 Boundary crossed detected!', {
+        from: lastVerifiedPosition.current,
+        to: currentPos,
+        originalDelta: { deltaX, deltaY },
+        contractDelta: { contractDeltaX, contractDeltaY }
+      });
+      processBoundaryCrossing(contractDeltaX, contractDeltaY, deltaX, deltaY, currentPos);
+    }
+  }, [position.x, position.z, checkBoundaryCrossing, processBoundaryCrossing]);
+
+  
+  const closeTransactionPopup = useCallback(() => {
+    setShowTransactionPopup(false);
+    setTransactionError(null);
+  }, []);
+
+  return {
+    showTransactionPopup,
+    transactionError,
+    isProcessingTransaction: isLoading,
+    closeTransactionPopup,
+    lastTransactionHash,
+    lastBoundaryCrossing
+  };
+};
