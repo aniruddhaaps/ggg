@@ -29,7 +29,7 @@ export function Model(props: JSX.IntrinsicElements['group']) {
     const mat = materials.Material.clone();
 
     // Enable vertex colors if the geometry has them
-    mat.vertexColors = (nodes.Object_2.geometry.attributes.color !== undefined);
+    mat.vertexColors = (nodes.Object_2?.geometry?.attributes?.color !== undefined);
 
     // Configure material properties
     mat.metalness = 0.3;

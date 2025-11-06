@@ -44,10 +44,10 @@ export default function FloorGrid({
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      minor.geometry.dispose();
-      (minor.material as THREE.Material).dispose();
-      major.geometry.dispose();
-      (major.material as THREE.Material).dispose();
+      minor?.geometry?.dispose();
+      (minor?.material as THREE.Material)?.dispose();
+      major?.geometry?.dispose();
+      (major?.material as THREE.Material)?.dispose();
     };
   }, [minor, major]);
 
