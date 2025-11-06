@@ -502,6 +502,30 @@ function App() {
       <div style={{
         position: 'absolute',
         bottom: '50px',
+        left: '70px',
+        zIndex: 10,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: '15px 25px',
+        borderRadius: '8px',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
+        fontFamily: 'Arial, Helvetica, sans-serif',
+      }}>
+        <p style={{
+          color: '#ffffff',
+          fontSize: '23px',
+          fontWeight: 400,
+          fontStyle: 'italic',
+          margin: 0,
+          lineHeight: '1.4',
+        }}>
+          The assets take quite some time to load, kindly wait for 2-3 mins at max
+        </p>
+      </div>
+      <div style={{
+        position: 'absolute',
+        bottom: '50px',
         right: '70px',
         zIndex: 10,
       }}>
